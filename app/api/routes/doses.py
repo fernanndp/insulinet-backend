@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -120,7 +120,42 @@ def update_dose(
     db.commit()
     db.refresh(movement)
     return movement
+@router.delete(
+    "/{insulin_id}/doses/{dose_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_dose(
+    insulin_id: int,
+    dose_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    insulin = get_owned_insulin(
+        db,
+        insulin_id,
+        current_user,
+    )
 
+    movement = db.scalar(
+        select(StockMovement).where(
+            StockMovement.id == dose_id,
+            StockMovement.insulin_id == insulin.id,
+            StockMovement.movement_type == MovementType.DOSE,
+        )
+    )
+
+    if movement is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Aplicação não encontrada.",
+        )
+
+    db.delete(movement)
+    db.commit()
+
+    return Response(
+        status_code=status.HTTP_204_NO_CONTENT
+    )
 
 @router.post(
     "/{insulin_id}/dose-batches",
