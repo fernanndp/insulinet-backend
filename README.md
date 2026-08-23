@@ -2,6 +2,12 @@
 
 API REST do **Insulinet**, uma aplicação para controle de estoque de insulina, registro de doses e estimativa de autonomia com base no histórico de consumo.
 
+## Produção
+
+- Frontend: https://insulinet-frontend-production.up.railway.app
+- API: https://insulinet-backend-production.up.railway.app
+- Documentação Swagger: https://insulinet-backend-production.up.railway.app/docs
+
 ## Tecnologias
 
 - Python
@@ -12,6 +18,7 @@ API REST do **Insulinet**, uma aplicação para controle de estoque de insulina,
 - JWT
 - Argon2
 - Resend
+- Railway
 
 ## Funcionalidades
 
@@ -108,25 +115,13 @@ Nunca versione o arquivo `.env`.
 
 O projeto utiliza PostgreSQL e Alembic para controle de migrations.
 
-Verifique a migration atual:
-
 ```bash
 alembic current
-```
-
-Verifique a migration mais recente disponível:
-
-```bash
 alembic heads
-```
-
-Para aplicar migrations pendentes:
-
-```bash
 alembic upgrade head
 ```
 
-## Executando
+## Executando localmente
 
 ```bash
 uvicorn app.main:app --reload
@@ -188,9 +183,23 @@ PATCH /api/insulins/{insulin_id}/doses/{dose_id}
 POST  /api/insulins/{insulin_id}/dose-batches
 ```
 
-## Segurança
+## Deploy
 
-O backend utiliza:
+O backend está hospedado no Railway com PostgreSQL gerenciado.
+
+Configurações principais de produção:
+
+```text
+Start Command:
+uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+Pre-deploy Command:
+alembic upgrade head
+```
+
+As credenciais e demais valores sensíveis são configurados exclusivamente como variáveis de ambiente no Railway.
+
+## Segurança
 
 - Hash de senhas com Argon2
 - Tokens JWT para autenticação
@@ -200,24 +209,26 @@ O backend utiliza:
 
 ## Roadmap
 
-Entre as funcionalidades planejadas para evolução do Insulinet estão:
-
 - Alertas de estoque baixo com base na autonomia estimada
-- Definição de um nível mínimo de segurança para reposição
-- Previsão da data recomendada para aquisição de uma nova unidade de insulina
+- Definição de nível mínimo de segurança para reposição
+- Previsão da data recomendada para aquisição de nova unidade de insulina
 - Controle do processo de reposição diretamente pela plataforma
 - Busca de opções de compra em farmácias
-- Redirecionamento do usuário para farmácias ou páginas de compra compatíveis com a insulina cadastrada
-- Possibilidade futura de integração com serviços de disponibilidade e preços de farmácias
+- Redirecionamento para farmácias ou páginas de compra compatíveis
+- Possível integração futura com serviços de disponibilidade e preços
 
 A proposta é evoluir o Insulinet de um sistema de controle de estoque para uma ferramenta capaz de antecipar a necessidade de reposição e facilitar o acesso do usuário ao medicamento.
 
 ## Frontend
 
-O frontend do projeto está em:
+Código-fonte:
 
 https://github.com/fernanndp/insulinet-frontend
 
+Aplicação:
+
+https://insulinet-frontend-production.up.railway.app
+
 ## Status
 
-Projeto em desenvolvimento.
+Projeto em desenvolvimento e disponível em ambiente de produção no Railway.
