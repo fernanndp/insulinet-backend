@@ -34,6 +34,8 @@ class StockMovementResponse(BaseModel):
 
     id: int
     insulin_id: int
+    container_id: int
+    group_id: int | None
     movement_type: str
     quantity_units: Decimal
     occurred_at: datetime
@@ -74,6 +76,8 @@ class StockHistoryItem(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    container_id: int
+    group_id: int | None
     movement_type: str
     quantity_units: Decimal
     occurred_at: datetime
@@ -179,8 +183,21 @@ class StockAdjustmentCreate(BaseModel):
     )
     
 class StockInUpdate(BaseModel):
-    containers: int = Field(gt=0)
-    
+    units: Decimal = Field(gt=0)
+
+
+class InsulinContainerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    insulin_id: int
+    status: str
+    initial_units: Decimal
+    remaining_units: Decimal
+    opened_at: datetime | None
+    created_at: datetime
+
+
 class InsulinUpdate(BaseModel):
     name: str = Field(
         min_length=1,
