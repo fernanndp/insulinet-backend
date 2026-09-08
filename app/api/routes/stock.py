@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -7,19 +6,37 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user
 from app.database import get_db
-from app.models import MovementType, StockMovement, User
+from app.models import (
+    ContainerStatus,
+    InsulinContainer,
+    MovementType,
+    StockMovement,
+    User,
+)
 from app.schemas import (
+    InsulinContainerResponse,
     StockAdjustmentCreate,
     StockInCreate,
     StockInUpdate,
     StockMovementResponse,
     StockSummaryResponse,
 )
+from app.services.container_service import (
+    calculate_container_remaining,
+    list_containers,
+)
 from app.services.insulin_service import (
     ensure_insulin_active,
     get_owned_insulin,
 )
-from app.services.stock_service import calculate_current_stock
+from app.services.stock_service import (
+    InsufficientStockError,
+    NoContainerAvailableError,
+    apply_positive_adjustment,
+    calculate_current_stock,
+    create_stock_in_containers,
+    distribute_negative_delta,
+)
 
 
 router = APIRouter(
@@ -28,9 +45,26 @@ router = APIRouter(
 )
 
 
+def _container_to_response(
+    db: Session,
+    container: InsulinContainer,
+) -> dict:
+    return {
+        "id": container.id,
+        "insulin_id": container.insulin_id,
+        "status": container.status.value,
+        "initial_units": container.initial_units,
+        "remaining_units": calculate_container_remaining(
+            db, container.id
+        ),
+        "opened_at": container.opened_at,
+        "created_at": container.created_at,
+    }
+
+
 @router.post(
     "/{insulin_id}/stock",
-    response_model=StockMovementResponse,
+    response_model=list[StockMovementResponse],
     status_code=status.HTTP_201_CREATED,
 )
 def add_stock(
@@ -42,23 +76,16 @@ def add_stock(
     insulin = get_owned_insulin(db, insulin_id, current_user)
     ensure_insulin_active(insulin)
 
-    units_per_container = (
-        insulin.concentration_units_per_ml
-        * insulin.container_volume_ml
-    )
-    total_units = units_per_container * Decimal(stock_data.containers)
-
-    movement = StockMovement(
-        insulin_id=insulin.id,
-        movement_type=MovementType.STOCK_IN,
-        quantity_units=total_units,
-        notes=f"Entrada de {stock_data.containers} recipiente(s)",
+    movements = create_stock_in_containers(
+        db, insulin, stock_data.containers
     )
 
-    db.add(movement)
     db.commit()
-    db.refresh(movement)
-    return movement
+
+    for movement in movements:
+        db.refresh(movement)
+
+    return movements
 
 
 @router.get(
@@ -81,9 +108,79 @@ def get_stock(
     }
 
 
+@router.get(
+    "/{insulin_id}/containers",
+    response_model=list[InsulinContainerResponse],
+)
+def get_containers(
+    insulin_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    insulin = get_owned_insulin(db, insulin_id, current_user)
+    containers = list_containers(db, insulin.id)
+
+    return [
+        _container_to_response(db, container)
+        for container in containers
+    ]
+
+
+@router.post(
+    "/{insulin_id}/containers/{container_id}/discard",
+    response_model=InsulinContainerResponse,
+)
+def discard_container(
+    insulin_id: int,
+    container_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    insulin = get_owned_insulin(db, insulin_id, current_user)
+    ensure_insulin_active(insulin)
+
+    container = db.scalar(
+        select(InsulinContainer).where(
+            InsulinContainer.id == container_id,
+            InsulinContainer.insulin_id == insulin.id,
+        )
+    )
+
+    if container is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Caneta/frasco não encontrado.",
+        )
+
+    if container.status == ContainerStatus.DISCARDED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Essa caneta/frasco já foi descartado.",
+        )
+
+    remaining = calculate_container_remaining(db, container.id)
+
+    if remaining > 0:
+        movement = StockMovement(
+            insulin_id=insulin.id,
+            container_id=container.id,
+            movement_type=MovementType.DISCARD,
+            quantity_units=-remaining,
+            notes="Caneta/frasco descartado manualmente.",
+        )
+        db.add(movement)
+
+    container.status = ContainerStatus.DISCARDED
+
+    db.commit()
+    db.refresh(container)
+
+    return _container_to_response(db, container)
+
+
 @router.post(
     "/{insulin_id}/adjustments",
-    response_model=StockMovementResponse,
+    response_model=list[StockMovementResponse],
     status_code=status.HTTP_201_CREATED,
 )
 def adjust_stock(
@@ -108,19 +205,49 @@ def adjust_stock(
             ),
         )
 
-    movement = StockMovement(
-        insulin_id=insulin.id,
-        movement_type=MovementType.ADJUSTMENT,
-        quantity_units=difference,
-        occurred_at=datetime.now(timezone.utc),
-        occurred_time_known=True,
-        notes=adjustment_data.notes.strip(),
-    )
+    occurred_at = datetime.now(timezone.utc)
+    notes = adjustment_data.notes.strip()
 
-    db.add(movement)
+    try:
+        if difference > 0:
+            movements = [
+                apply_positive_adjustment(
+                    db, insulin, difference, occurred_at, notes
+                )
+            ]
+        else:
+            movements = distribute_negative_delta(
+                db,
+                insulin,
+                -difference,
+                MovementType.ADJUSTMENT,
+                occurred_at,
+                True,
+                notes,
+            )
+    except InsufficientStockError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Não há estoque suficiente distribuído entre "
+                "as canetas/frascos para aplicar esse ajuste."
+            ),
+        )
+    except NoContainerAvailableError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Nenhuma caneta/frasco em estoque para ajustar. "
+                "Adicione estoque primeiro."
+            ),
+        )
+
     db.commit()
-    db.refresh(movement)
-    return movement
+
+    for movement in movements:
+        db.refresh(movement)
+
+    return movements
 
 
 @router.patch(
@@ -150,24 +277,20 @@ def update_stock_entry(
             detail="Entrada de estoque não encontrada.",
         )
 
-    units_per_container = (
-        insulin.concentration_units_per_ml
-        * insulin.container_volume_ml
-    )
-    new_quantity = units_per_container * stock_data.containers
-    current_stock = calculate_current_stock(db, insulin.id)
-    projected_stock = current_stock - movement.quantity_units + new_quantity
+    container = movement.container
 
-    if projected_stock < 0:
+    if container.status != ContainerStatus.SEALED:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "Essa alteração deixaria o estoque atual negativo. "
-                f"Estoque resultante: {projected_stock} U."
+                "Não é possível editar essa entrada: a caneta/frasco "
+                "já foi aberto ou utilizado."
             ),
         )
 
-    movement.quantity_units = new_quantity
+    container.initial_units = stock_data.units
+    movement.quantity_units = stock_data.units
+
     db.commit()
     db.refresh(movement)
     return movement
