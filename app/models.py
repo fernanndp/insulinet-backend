@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Enum as SqlEnum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     text,
@@ -90,6 +91,13 @@ class Insulin(Base):
     container_volume_ml: Mapped[Decimal] = mapped_column(
         Numeric(10, 2),
         nullable=False,
+    )
+
+    open_validity_days: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=28,
+        server_default=text("28"),
     )
 
     active: Mapped[bool] = mapped_column(

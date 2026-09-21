@@ -11,6 +11,8 @@ class InsulinCreate(BaseModel):
 
     container_volume_ml: Decimal = Field(gt=0)
 
+    open_validity_days: int = Field(default=28, ge=1, le=180)
+
 
 class InsulinResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -20,6 +22,7 @@ class InsulinResponse(BaseModel):
 
     concentration_units_per_ml: Decimal
     container_volume_ml: Decimal
+    open_validity_days: int
 
     active: bool
     created_at: datetime
@@ -99,6 +102,12 @@ class InsulinSummaryResponse(BaseModel):
     estimated_end_date: date | None
 
     projection_available: bool
+
+    stock_alert_level: str
+
+    container_alert_level: str
+
+    container_alert_days: int | None
 
 from pydantic import EmailStr
 
@@ -196,6 +205,9 @@ class InsulinContainerResponse(BaseModel):
     remaining_units: Decimal
     opened_at: datetime | None
     created_at: datetime
+    expires_at: datetime | None
+    days_until_expiration: int | None
+    expiration_status: str
 
 
 class InsulinUpdate(BaseModel):
@@ -211,5 +223,7 @@ class InsulinUpdate(BaseModel):
     container_volume_ml: Decimal = Field(
         gt=0
     )
+
+    open_validity_days: int = Field(ge=1, le=180)
 
     active: bool

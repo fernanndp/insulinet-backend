@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import APP_TIMEZONE
 from app.core.security import get_current_user
 from app.database import get_db
 from app.models import (
@@ -23,6 +24,7 @@ from app.schemas import (
 )
 from app.services.container_service import (
     calculate_container_remaining,
+    compute_container_expiration,
     list_containers,
 )
 from app.services.insulin_service import (
@@ -48,7 +50,14 @@ router = APIRouter(
 def _container_to_response(
     db: Session,
     container: InsulinContainer,
+    open_validity_days: int,
 ) -> dict:
+    expiration = compute_container_expiration(
+        container,
+        open_validity_days,
+        datetime.now(APP_TIMEZONE).date(),
+    )
+
     return {
         "id": container.id,
         "insulin_id": container.insulin_id,
@@ -59,6 +68,7 @@ def _container_to_response(
         ),
         "opened_at": container.opened_at,
         "created_at": container.created_at,
+        **expiration,
     }
 
 
@@ -121,7 +131,9 @@ def get_containers(
     containers = list_containers(db, insulin.id)
 
     return [
-        _container_to_response(db, container)
+        _container_to_response(
+            db, container, insulin.open_validity_days
+        )
         for container in containers
     ]
 
@@ -175,7 +187,9 @@ def discard_container(
     db.commit()
     db.refresh(container)
 
-    return _container_to_response(db, container)
+    return _container_to_response(
+        db, container, insulin.open_validity_days
+    )
 
 
 @router.post(

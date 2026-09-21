@@ -1,10 +1,13 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import APP_TIMEZONE
 from app.models import ContainerStatus, InsulinContainer, StockMovement
+
+OPEN_EXPIRATION_WARNING_DAYS = 5
 
 
 def list_containers(
@@ -68,6 +71,52 @@ def open_container(
         container.status = ContainerStatus.OPEN
         container.opened_at = datetime.now(timezone.utc)
         db.flush()
+
+
+def compute_container_expiration(
+    container: InsulinContainer,
+    open_validity_days: int,
+    today_local: date,
+) -> dict:
+    if (
+        container.status != ContainerStatus.OPEN
+        or container.opened_at is None
+    ):
+        return {
+            "expires_at": None,
+            "days_until_expiration": None,
+            "expiration_status": "not_applicable",
+        }
+
+    opened_at = container.opened_at
+    if opened_at.tzinfo is None:
+        opened_at = opened_at.replace(tzinfo=timezone.utc)
+
+    opened_local_date = opened_at.astimezone(APP_TIMEZONE).date()
+    expires_local_date = opened_local_date + timedelta(
+        days=open_validity_days
+    )
+
+    days_until_expiration = (expires_local_date - today_local).days
+
+    if days_until_expiration <= 0:
+        expiration_status = "expired"
+    elif days_until_expiration <= OPEN_EXPIRATION_WARNING_DAYS:
+        expiration_status = "expiring_soon"
+    else:
+        expiration_status = "ok"
+
+    expires_at = datetime.combine(
+        expires_local_date,
+        time.min,
+        tzinfo=APP_TIMEZONE,
+    )
+
+    return {
+        "expires_at": expires_at,
+        "days_until_expiration": days_until_expiration,
+        "expiration_status": expiration_status,
+    }
 
 
 def get_available_containers_fifo(
