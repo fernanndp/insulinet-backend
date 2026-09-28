@@ -1,7 +1,13 @@
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Request,
+    status,
+)
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +19,11 @@ from app.core.security import (
     hash_password,
     hash_password_reset_token,
     verify_password,
+)
+
+from app.core.rate_limit import limiter
+from app.core.password_policy import (
+    validate_password_strength,
 )
 from app.database import get_db
 from app.models import PasswordResetToken, User
@@ -34,19 +45,22 @@ router = APIRouter(
 )
 logger = logging.getLogger(__name__)
 
-
 @router.post(
     "/login",
     response_model=TokenResponse,
 )
+@limiter.limit("5/minute")
 def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
     email = form_data.username.strip().lower()
 
     user = db.scalar(
-        select(User).where(User.email == email)
+        select(User).where(
+            User.email == email
+        )
     )
 
     if user is None or not verify_password(
@@ -56,55 +70,82 @@ def login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="E-mail ou senha inválidos.",
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={
+                "WWW-Authenticate": "Bearer"
+            },
         )
 
-    access_token = create_access_token(user.id)
+    access_token = create_access_token(
+        user.id
+    )
 
     return {
         "access_token": access_token,
         "token_type": "bearer",
     }
-
-
+    
 @router.post(
     "/register",
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit("5/hour")
 def register_user(
+    request: Request,
     user_data: UserCreate,
     db: Session = Depends(get_db),
 ):
-    email = str(user_data.email).strip().lower()
+    email = str(
+        user_data.email
+    ).strip().lower()
 
     existing_user = db.scalar(
-        select(User).where(User.email == email)
+        select(User).where(
+            User.email == email
+        )
     )
 
     if existing_user is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Já existe uma conta com este e-mail.",
+            detail=(
+                "Já existe uma conta com este e-mail."
+            ),
         )
+
+    try:
+        validate_password_strength(
+            user_data.password,
+            name=user_data.name,
+            email=email,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
     user = User(
         name=user_data.name.strip(),
         email=email,
-        password_hash=hash_password(user_data.password),
+        password_hash=hash_password(
+            user_data.password
+        ),
     )
 
     db.add(user)
     db.commit()
     db.refresh(user)
-    return user
 
+    return user
 
 @router.post(
     "/forgot-password",
     response_model=ForgotPasswordResponse,
 )
+@limiter.limit("3/minute")
 def forgot_password(
+    request: Request,
     data: ForgotPasswordRequest,
     db: Session = Depends(get_db),
 ):
@@ -149,11 +190,14 @@ def forgot_password(
     return {"message": generic_message}
 
 
+ssion = Depends(get_db),
 @router.post(
     "/reset-password",
     response_model=ResetPasswordResponse,
 )
+@limiter.limit("5/minute")
 def reset_password(
+    request: Request,
     data: ResetPasswordRequest,
     db: Session = Depends(get_db),
 ):
@@ -179,15 +223,38 @@ def reset_password(
             detail="Token inválido ou expirado.",
         )
 
-    user = db.get(User, reset_token.user_id)
+    user = db.get(
+        User,
+        reset_token.user_id,
+    )
+
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Token inválido ou expirado.",
         )
 
-    user.password_hash = hash_password(data.new_password)
+    try:
+        validate_password_strength(
+            data.new_password,
+            name=user.name,
+            email=user.email,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    user.password_hash = hash_password(
+        data.new_password
+    )
+
     reset_token.used_at = now
+
     db.commit()
 
-    return {"message": "Senha alterada com sucesso."}
+    return {
+        "message": "Senha alterada com sucesso."
+    }
+

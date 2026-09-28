@@ -7,7 +7,10 @@ from sqlalchemy.orm import Session
 from app.core.config import APP_TIMEZONE
 from app.models import Insulin, MovementType, StockMovement
 from app.services.stock_service import calculate_current_stock
-
+from app.services.expiration_service import (
+    build_expiration_projection,
+    get_next_expiration_snapshot,
+)
 
 def _to_local_datetime(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -23,6 +26,12 @@ def build_insulin_summary(
 
     now_local = datetime.now(APP_TIMEZONE)
     today_local = now_local.date()
+    expiration_snapshot = (
+    get_next_expiration_snapshot(
+        db,
+        insulin.id,
+    )
+)
     lookback_date = today_local - timedelta(days=30)
     lookback_local = datetime.combine(
         lookback_date,
@@ -67,8 +76,16 @@ def build_insulin_summary(
     )
     selected_days = recorded_days[:14]
     history_days_used = len(selected_days)
-
+    
     if history_days_used < 3:
+        expiration_projection = (
+            build_expiration_projection(
+                expiration_snapshot,
+                None,
+                today_local,
+            )
+        )
+
         return {
             "insulin_id": insulin.id,
             "insulin_name": insulin.name,
@@ -78,6 +95,7 @@ def build_insulin_summary(
             "estimated_days_remaining": None,
             "estimated_end_date": None,
             "projection_available": False,
+            **expiration_projection,
         }
 
     total_consumption = sum(
@@ -91,7 +109,15 @@ def build_insulin_summary(
         Decimal("0.01"),
         rounding=ROUND_HALF_UP,
     )
-
+    
+    expiration_projection = (
+    build_expiration_projection(
+        expiration_snapshot,
+        average_daily_consumption,
+        today_local,
+    )
+   )
+    
     if average_daily_consumption <= 0 or current_stock <= 0:
         return {
             "insulin_id": insulin.id,
@@ -102,6 +128,7 @@ def build_insulin_summary(
             "estimated_days_remaining": None,
             "estimated_end_date": None,
             "projection_available": False,
+            **expiration_projection,
         }
 
     estimated_days = (
@@ -124,4 +151,5 @@ def build_insulin_summary(
         "estimated_days_remaining": estimated_days,
         "estimated_end_date": estimated_end_date,
         "projection_available": True,
+        **expiration_projection,
     }

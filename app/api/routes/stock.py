@@ -47,12 +47,15 @@ def add_stock(
         * insulin.container_volume_ml
     )
     total_units = units_per_container * Decimal(stock_data.containers)
-
     movement = StockMovement(
         insulin_id=insulin.id,
         movement_type=MovementType.STOCK_IN,
         quantity_units=total_units,
-        notes=f"Entrada de {stock_data.containers} recipiente(s)",
+        expiration_date=stock_data.expiration_date,
+        notes=(
+            f"Entrada de "
+            f"{stock_data.containers} recipiente(s)"
+        ),
     )
 
     db.add(movement)
@@ -166,8 +169,9 @@ def update_stock_entry(
                 f"Estoque resultante: {projected_stock} U."
             ),
         )
-
-    movement.quantity_units = new_quantity
+    movement.expiration_date = (
+        stock_data.expiration_date
+    )
     db.commit()
     db.refresh(movement)
     return movement

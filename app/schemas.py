@@ -27,7 +27,7 @@ class InsulinResponse(BaseModel):
 
 class StockInCreate(BaseModel):
     containers: int = Field(gt=0)
-
+    expiration_date: date | None = None
 
 class StockMovementResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -36,6 +36,7 @@ class StockMovementResponse(BaseModel):
     insulin_id: int
     movement_type: str
     quantity_units: Decimal
+    expiration_date: date | None
     occurred_at: datetime
     notes: str | None
     created_at: datetime
@@ -79,6 +80,7 @@ class StockHistoryItem(BaseModel):
     occurred_at: datetime
     notes: str | None
     occurred_time_known: bool
+    expiration_date: date | None
     
 class InsulinSummaryResponse(BaseModel):
     insulin_id: int
@@ -87,16 +89,18 @@ class InsulinSummaryResponse(BaseModel):
     current_stock_units: Decimal
 
     average_daily_consumption_units: Decimal | None
-
     history_days_used: int
 
     estimated_days_remaining: Decimal | None
-
     estimated_end_date: date | None
 
     projection_available: bool
 
-from pydantic import EmailStr
+    next_expiration_date: date | None
+    days_until_expiration: int | None
+    expiring_stock_units: Decimal | None
+    estimated_expiring_stock_end_date: date | None
+    expiration_status: str
 
 
 class UserCreate(BaseModel):
@@ -108,7 +112,7 @@ class UserCreate(BaseModel):
     email: EmailStr
 
     password: str = Field(
-        min_length=8,
+        min_length=1,
         max_length=128,
     )
 
@@ -141,10 +145,24 @@ class ResetPasswordRequest(BaseModel):
     )
 
     new_password: str = Field(
-        min_length=8,
+        min_length=1,
         max_length=128,
     )
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+
+    new_password: str = Field(
+        min_length=1,
+        max_length=128,
+    )
+
+
+class ChangePasswordResponse(BaseModel):
+    message: str
 
 class ResetPasswordResponse(BaseModel):
     message: str

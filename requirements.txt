@@ -10,3 +10,4 @@ python-multipart==0.0.32
 pydantic[email]==2.13.4
 resend==2.36.0
 tzdata==2026.3
+slowapi==0.1.10
