@@ -1,7 +1,12 @@
 from datetime import date, datetime, time
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+)
 
 
 class InsulinCreate(BaseModel):
@@ -41,6 +46,28 @@ class InsulinResponse(BaseModel):
     created_at: datetime
 
 
+class InsulinUpdate(BaseModel):
+    name: str = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    concentration_units_per_ml: Decimal = Field(
+        gt=0
+    )
+
+    container_volume_ml: Decimal = Field(
+        gt=0
+    )
+
+    open_validity_days: int = Field(
+        ge=1,
+        le=180,
+    )
+
+    active: bool
+
+
 class StockInCreate(BaseModel):
     containers: int = Field(
         gt=0
@@ -77,6 +104,62 @@ class StockSummaryResponse(BaseModel):
     current_stock_units: Decimal
 
 
+class StockInUpdate(BaseModel):
+    units: Decimal = Field(
+        gt=0
+    )
+
+    expiration_date: date | None = None
+
+
+class StockAdjustmentCreate(BaseModel):
+    actual_stock_units: Decimal = Field(
+        ge=0
+    )
+
+    notes: str = Field(
+        min_length=3,
+        max_length=500,
+    )
+
+
+class ContainerExpirationUpdate(BaseModel):
+    container_ids: list[int] = Field(
+        min_length=1
+    )
+
+    expiration_date: date
+
+
+class InsulinContainerResponse(BaseModel):
+    model_config = ConfigDict(
+        from_attributes=True
+    )
+
+    id: int
+    insulin_id: int
+
+    status: str
+
+    initial_units: Decimal
+    remaining_units: Decimal
+
+    opened_at: datetime | None
+    created_at: datetime
+
+    expires_at: datetime | None
+
+    days_until_expiration: int | None
+
+    expiration_status: str
+
+    expiration_source: str | None
+
+    stock_expiration_date: date | None
+
+    open_discard_date: date | None
+
+
 class DoseCreate(BaseModel):
     units: Decimal = Field(
         gt=0
@@ -104,6 +187,27 @@ class DoseUpdate(BaseModel):
     notes: str | None = Field(
         default=None,
         max_length=500,
+    )
+
+
+class DoseBatchItem(BaseModel):
+    occurred_date: date
+
+    units: Decimal = Field(
+        gt=0
+    )
+
+    occurred_time: time | None = None
+
+    notes: str | None = Field(
+        default=None,
+        max_length=500,
+    )
+
+
+class DoseBatchCreate(BaseModel):
+    doses: list[DoseBatchItem] = Field(
+        min_length=1
     )
 
 
@@ -141,18 +245,19 @@ class InsulinSummaryResponse(BaseModel):
 
     projection_available: bool
 
-    # Alertas gerais de estoque
     stock_alert_level: str
 
-    # Alertas da caneta/frasco aberto
     container_alert_level: str
     container_alert_days: int | None
 
-    # Alertas de validade do estoque
     next_expiration_date: date | None
     days_until_expiration: int | None
     expiring_stock_units: Decimal | None
-    estimated_expiring_stock_end_date: date | None
+
+    estimated_expiring_stock_end_date: (
+        date | None
+    )
+
     expiration_status: str
 
 
@@ -206,6 +311,10 @@ class ResetPasswordRequest(BaseModel):
     )
 
 
+class ResetPasswordResponse(BaseModel):
+    message: str
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(
         min_length=1,
@@ -220,90 +329,3 @@ class ChangePasswordRequest(BaseModel):
 
 class ChangePasswordResponse(BaseModel):
     message: str
-
-
-class ResetPasswordResponse(BaseModel):
-    message: str
-
-
-class DoseBatchItem(BaseModel):
-    occurred_date: date
-
-    units: Decimal = Field(
-        gt=0
-    )
-
-    occurred_time: time | None = None
-
-    notes: str | None = Field(
-        default=None,
-        max_length=500,
-    )
-
-
-class DoseBatchCreate(BaseModel):
-    doses: list[DoseBatchItem] = Field(
-        min_length=1
-    )
-
-
-class StockAdjustmentCreate(BaseModel):
-    actual_stock_units: Decimal = Field(
-        ge=0
-    )
-
-    notes: str = Field(
-        min_length=3,
-        max_length=500,
-    )
-
-
-class StockInUpdate(BaseModel):
-    units: Decimal = Field(
-        gt=0
-    )
-
-    expiration_date: date | None = None
-
-
-class InsulinContainerResponse(BaseModel):
-    model_config = ConfigDict(
-        from_attributes=True
-    )
-
-    id: int
-    insulin_id: int
-
-    status: str
-
-    initial_units: Decimal
-    remaining_units: Decimal
-
-    opened_at: datetime | None
-    created_at: datetime
-
-    expires_at: datetime | None
-    days_until_expiration: int | None
-    expiration_status: str
-
-
-class InsulinUpdate(BaseModel):
-    name: str = Field(
-        min_length=1,
-        max_length=100,
-    )
-
-    concentration_units_per_ml: Decimal = Field(
-        gt=0
-    )
-
-    container_volume_ml: Decimal = Field(
-        gt=0
-    )
-
-    open_validity_days: int = Field(
-        ge=1,
-        le=180,
-    )
-
-    active: bool

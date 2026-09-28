@@ -1,6 +1,11 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -15,6 +20,7 @@ from app.models import (
     User,
 )
 from app.schemas import (
+    ContainerExpirationUpdate,
     InsulinContainerResponse,
     StockAdjustmentCreate,
     StockInCreate,
@@ -25,6 +31,7 @@ from app.schemas import (
 from app.services.container_service import (
     calculate_container_remaining,
     compute_container_expiration,
+    get_container_stock_expiration,
     list_containers,
 )
 from app.services.insulin_service import (
@@ -52,56 +59,95 @@ def _container_to_response(
     container: InsulinContainer,
     open_validity_days: int,
 ) -> dict:
-    expiration = compute_container_expiration(
-        container,
-        open_validity_days,
-        datetime.now(APP_TIMEZONE).date(),
+    stock_expiration_date = (
+        get_container_stock_expiration(
+            db,
+            container.id,
+        )
+    )
+
+    expiration = (
+        compute_container_expiration(
+            container,
+            open_validity_days,
+            datetime.now(
+                APP_TIMEZONE
+            ).date(),
+            stock_expiration_date,
+        )
     )
 
     return {
-        "id": container.id,
-        "insulin_id": container.insulin_id,
-        "status": container.status.value,
-        "initial_units": container.initial_units,
-        "remaining_units": calculate_container_remaining(
-            db,
+        "id":
             container.id,
-        ),
-        "opened_at": container.opened_at,
-        "created_at": container.created_at,
+
+        "insulin_id":
+            container.insulin_id,
+
+        "status":
+            container.status.value,
+
+        "initial_units":
+            container.initial_units,
+
+        "remaining_units":
+            calculate_container_remaining(
+                db,
+                container.id,
+            ),
+
+        "opened_at":
+            container.opened_at,
+
+        "created_at":
+            container.created_at,
+
         **expiration,
     }
 
 
 @router.post(
     "/{insulin_id}/stock",
-    response_model=list[StockMovementResponse],
+    response_model=list[
+        StockMovementResponse
+    ],
     status_code=status.HTTP_201_CREATED,
 )
 def add_stock(
     insulin_id: int,
     stock_data: StockInCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Session = Depends(
+        get_db
+    ),
+    current_user: User = Depends(
+        get_current_user
+    ),
 ):
     insulin = get_owned_insulin(
         db,
         insulin_id,
         current_user,
     )
-    ensure_insulin_active(insulin)
 
-    movements = create_stock_in_containers(
-        db,
-        insulin,
-        stock_data.containers,
-        stock_data.expiration_date,
+    ensure_insulin_active(
+        insulin
+    )
+
+    movements = (
+        create_stock_in_containers(
+            db,
+            insulin,
+            stock_data.containers,
+            stock_data.expiration_date,
+        )
     )
 
     db.commit()
 
     for movement in movements:
-        db.refresh(movement)
+        db.refresh(
+            movement
+        )
 
     return movements
 
@@ -112,36 +158,56 @@ def add_stock(
 )
 def get_stock(
     insulin_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Session = Depends(
+        get_db
+    ),
+    current_user: User = Depends(
+        get_current_user
+    ),
 ):
     insulin = get_owned_insulin(
         db,
         insulin_id,
         current_user,
     )
-    ensure_insulin_active(insulin)
 
-    current_stock = calculate_current_stock(
-        db,
-        insulin.id,
+    ensure_insulin_active(
+        insulin
+    )
+
+    current_stock = (
+        calculate_current_stock(
+            db,
+            insulin.id,
+        )
     )
 
     return {
-        "insulin_id": insulin.id,
-        "insulin_name": insulin.name,
-        "current_stock_units": current_stock,
+        "insulin_id":
+            insulin.id,
+
+        "insulin_name":
+            insulin.name,
+
+        "current_stock_units":
+            current_stock,
     }
 
 
 @router.get(
     "/{insulin_id}/containers",
-    response_model=list[InsulinContainerResponse],
+    response_model=list[
+        InsulinContainerResponse
+    ],
 )
 def get_containers(
     insulin_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Session = Depends(
+        get_db
+    ),
+    current_user: User = Depends(
+        get_current_user
+    ),
 ):
     insulin = get_owned_insulin(
         db,
@@ -149,9 +215,11 @@ def get_containers(
         current_user,
     )
 
-    containers = list_containers(
-        db,
-        insulin.id,
+    containers = (
+        list_containers(
+            db,
+            insulin.id,
+        )
     )
 
     return [
@@ -160,7 +228,125 @@ def get_containers(
             container,
             insulin.open_validity_days,
         )
-        for container in containers
+        for container
+        in containers
+    ]
+
+
+@router.patch(
+    "/{insulin_id}/containers/expiration",
+    response_model=list[
+        InsulinContainerResponse
+    ],
+)
+def update_containers_expiration(
+    insulin_id: int,
+    expiration_data:
+        ContainerExpirationUpdate,
+    db: Session = Depends(
+        get_db
+    ),
+    current_user: User = Depends(
+        get_current_user
+    ),
+):
+    insulin = get_owned_insulin(
+        db,
+        insulin_id,
+        current_user,
+    )
+
+    requested_ids = set(
+        expiration_data
+            .container_ids
+    )
+
+    containers = list(
+        db.scalars(
+            select(
+                InsulinContainer
+            ).where(
+                InsulinContainer.insulin_id
+                == insulin.id,
+
+                InsulinContainer.id.in_(
+                    requested_ids
+                ),
+            )
+        ).all()
+    )
+
+    found_ids = {
+        container.id
+        for container
+        in containers
+    }
+
+    missing_ids = (
+        requested_ids
+        - found_ids
+    )
+
+    if missing_ids:
+        raise HTTPException(
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "Uma ou mais canetas/frascos "
+                "não foram encontradas."
+            ),
+        )
+
+    for container in containers:
+        movement = db.scalar(
+            select(
+                StockMovement
+            )
+            .where(
+                StockMovement.container_id
+                == container.id,
+
+                StockMovement.movement_type
+                == MovementType.STOCK_IN,
+            )
+            .order_by(
+                StockMovement.id
+            )
+        )
+
+        if movement is None:
+            raise HTTPException(
+                status_code=(
+                    status.HTTP_409_CONFLICT
+                ),
+                detail=(
+                    "Não foi possível localizar "
+                    "a entrada de estoque de uma "
+                    "das canetas/frascos."
+                ),
+            )
+
+        movement.expiration_date = (
+            expiration_data
+                .expiration_date
+        )
+
+    db.commit()
+
+    for container in containers:
+        db.refresh(
+            container
+        )
+
+    return [
+        _container_to_response(
+            db,
+            container,
+            insulin.open_validity_days,
+        )
+        for container
+        in containers
     ]
 
 
@@ -171,54 +357,98 @@ def get_containers(
 def discard_container(
     insulin_id: int,
     container_id: int,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Session = Depends(
+        get_db
+    ),
+    current_user: User = Depends(
+        get_current_user
+    ),
 ):
     insulin = get_owned_insulin(
         db,
         insulin_id,
         current_user,
     )
-    ensure_insulin_active(insulin)
+
+    ensure_insulin_active(
+        insulin
+    )
 
     container = db.scalar(
-        select(InsulinContainer).where(
-            InsulinContainer.id == container_id,
-            InsulinContainer.insulin_id == insulin.id,
+        select(
+            InsulinContainer
+        ).where(
+            InsulinContainer.id
+            == container_id,
+
+            InsulinContainer.insulin_id
+            == insulin.id,
         )
     )
 
     if container is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Caneta/frasco não encontrado.",
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "Caneta/frasco não encontrado."
+            ),
         )
 
-    if container.status == ContainerStatus.DISCARDED:
+    if (
+        container.status
+        == ContainerStatus.DISCARDED
+    ):
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Essa caneta/frasco já foi descartado.",
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
+            detail=(
+                "Essa caneta/frasco já foi descartado."
+            ),
         )
 
-    remaining = calculate_container_remaining(
-        db,
-        container.id,
+    remaining = (
+        calculate_container_remaining(
+            db,
+            container.id,
+        )
     )
 
     if remaining > 0:
         movement = StockMovement(
-            insulin_id=insulin.id,
-            container_id=container.id,
-            movement_type=MovementType.DISCARD,
-            quantity_units=-remaining,
-            notes="Caneta/frasco descartado manualmente.",
-        )
-        db.add(movement)
+            insulin_id=
+                insulin.id,
 
-    container.status = ContainerStatus.DISCARDED
+            container_id=
+                container.id,
+
+            movement_type=
+                MovementType.DISCARD,
+
+            quantity_units=
+                -remaining,
+
+            notes=(
+                "Caneta/frasco "
+                "descartado manualmente."
+            ),
+        )
+
+        db.add(
+            movement
+        )
+
+    container.status = (
+        ContainerStatus.DISCARDED
+    )
 
     db.commit()
-    db.refresh(container)
+
+    db.refresh(
+        container
+    )
 
     return _container_to_response(
         db,
@@ -229,41 +459,71 @@ def discard_container(
 
 @router.post(
     "/{insulin_id}/adjustments",
-    response_model=list[StockMovementResponse],
+    response_model=list[
+        StockMovementResponse
+    ],
     status_code=status.HTTP_201_CREATED,
 )
 def adjust_stock(
     insulin_id: int,
-    adjustment_data: StockAdjustmentCreate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    adjustment_data:
+        StockAdjustmentCreate,
+    db: Session = Depends(
+        get_db
+    ),
+    current_user: User = Depends(
+        get_current_user
+    ),
 ):
     insulin = get_owned_insulin(
         db,
         insulin_id,
         current_user,
     )
-    ensure_insulin_active(insulin)
 
-    current_stock = calculate_current_stock(
-        db,
-        insulin.id,
+    ensure_insulin_active(
+        insulin
     )
 
-    actual_stock = adjustment_data.actual_stock_units
-    difference = actual_stock - current_stock
+    current_stock = (
+        calculate_current_stock(
+            db,
+            insulin.id,
+        )
+    )
+
+    actual_stock = (
+        adjustment_data
+            .actual_stock_units
+    )
+
+    difference = (
+        actual_stock
+        - current_stock
+    )
 
     if difference == 0:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=(
+                status.HTTP_400_BAD_REQUEST
+            ),
             detail=(
                 "O estoque informado já é igual "
                 "ao estoque calculado pelo sistema."
             ),
         )
 
-    occurred_at = datetime.now(timezone.utc)
-    notes = adjustment_data.notes.strip()
+    occurred_at = (
+        datetime.now(
+            timezone.utc
+        )
+    )
+
+    notes = (
+        adjustment_data
+            .notes
+            .strip()
+    )
 
     try:
         if difference > 0:
@@ -278,30 +538,39 @@ def adjust_stock(
             ]
 
         else:
-            movements = distribute_negative_delta(
-                db,
-                insulin,
-                -difference,
-                MovementType.ADJUSTMENT,
-                occurred_at,
-                True,
-                notes,
+            movements = (
+                distribute_negative_delta(
+                    db,
+                    insulin,
+                    -difference,
+                    MovementType.ADJUSTMENT,
+                    occurred_at,
+                    True,
+                    notes,
+                )
             )
 
     except InsufficientStockError:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
             detail=(
-                "Não há estoque suficiente distribuído entre "
-                "as canetas/frascos para aplicar esse ajuste."
+                "Não há estoque suficiente "
+                "distribuído entre as "
+                "canetas/frascos para "
+                "aplicar esse ajuste."
             ),
         )
 
     except NoContainerAvailableError:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
             detail=(
-                "Nenhuma caneta/frasco em estoque para ajustar. "
+                "Nenhuma caneta/frasco "
+                "em estoque para ajustar. "
                 "Adicione estoque primeiro."
             ),
         )
@@ -309,7 +578,9 @@ def adjust_stock(
     db.commit()
 
     for movement in movements:
-        db.refresh(movement)
+        db.refresh(
+            movement
+        )
 
     return movements
 
@@ -322,8 +593,12 @@ def update_stock_entry(
     insulin_id: int,
     movement_id: int,
     stock_data: StockInUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: Session = Depends(
+        get_db
+    ),
+    current_user: User = Depends(
+        get_current_user
+    ),
 ):
     insulin = get_owned_insulin(
         db,
@@ -332,35 +607,70 @@ def update_stock_entry(
     )
 
     movement = db.scalar(
-        select(StockMovement).where(
-            StockMovement.id == movement_id,
-            StockMovement.insulin_id == insulin.id,
-            StockMovement.movement_type == MovementType.STOCK_IN,
+        select(
+            StockMovement
+        ).where(
+            StockMovement.id
+            == movement_id,
+
+            StockMovement.insulin_id
+            == insulin.id,
+
+            StockMovement.movement_type
+            == MovementType.STOCK_IN,
         )
     )
 
     if movement is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Entrada de estoque não encontrada.",
+            status_code=(
+                status.HTTP_404_NOT_FOUND
+            ),
+            detail=(
+                "Entrada de estoque "
+                "não encontrada."
+            ),
         )
 
-    container = movement.container
+    container = (
+        movement.container
+    )
 
-    if container.status != ContainerStatus.SEALED:
+    if (
+        container.status
+        != ContainerStatus.SEALED
+    ):
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
+            status_code=(
+                status.HTTP_409_CONFLICT
+            ),
             detail=(
-                "Não é possível editar essa entrada: a caneta/frasco "
+                "Não é possível editar essa "
+                "entrada: a caneta/frasco "
                 "já foi aberto ou utilizado."
             ),
         )
 
-    container.initial_units = stock_data.units
-    movement.quantity_units = stock_data.units
-    movement.expiration_date = stock_data.expiration_date
+    container.initial_units = (
+        stock_data.units
+    )
+
+    movement.quantity_units = (
+        stock_data.units
+    )
+
+    if (
+        "expiration_date"
+        in stock_data.model_fields_set
+    ):
+        movement.expiration_date = (
+            stock_data.expiration_date
+        )
 
     db.commit()
-    db.refresh(movement)
+
+    db.refresh(
+        movement
+    )
 
     return movement
