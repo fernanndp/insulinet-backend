@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Enum as SqlEnum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     text,
@@ -21,6 +22,13 @@ class MovementType(str, Enum):
     DOSE = "DOSE"
     DISCARD = "DISCARD"
     ADJUSTMENT = "ADJUSTMENT"
+
+
+class ContainerStatus(str, Enum):
+    SEALED = "SEALED"
+    OPEN = "OPEN"
+    EMPTY = "EMPTY"
+    DISCARDED = "DISCARDED"
 
 
 class User(Base):
@@ -85,6 +93,13 @@ class Insulin(Base):
         nullable=False,
     )
 
+    open_validity_days: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=28,
+        server_default=text("28"),
+    )
+
     active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -106,6 +121,58 @@ class Insulin(Base):
         cascade="all, delete-orphan",
     )
 
+    containers: Mapped[list["InsulinContainer"]] = relationship(
+        back_populates="insulin",
+        cascade="all, delete-orphan",
+    )
+
+
+class InsulinContainer(Base):
+    __tablename__ = "insulin_container"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True
+    )
+
+    insulin_id: Mapped[int] = mapped_column(
+        ForeignKey("insulin.id"),
+        nullable=False,
+    )
+
+    initial_units: Mapped[Decimal] = mapped_column(
+        Numeric(10, 2),
+        nullable=False,
+    )
+
+    status: Mapped[ContainerStatus] = mapped_column(
+        SqlEnum(
+            ContainerStatus,
+            name="container_status",
+        ),
+        nullable=False,
+        default=ContainerStatus.SEALED,
+    )
+
+    opened_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    insulin: Mapped["Insulin"] = relationship(
+        back_populates="containers"
+    )
+
+    movements: Mapped[list["StockMovement"]] = relationship(
+        back_populates="container",
+        cascade="all, delete-orphan",
+    )
+
 
 class StockMovement(Base):
     __tablename__ = "stock_movement"
@@ -117,6 +184,16 @@ class StockMovement(Base):
     insulin_id: Mapped[int] = mapped_column(
         ForeignKey("insulin.id"),
         nullable=False,
+    )
+
+    container_id: Mapped[int] = mapped_column(
+        ForeignKey("insulin_container.id"),
+        nullable=False,
+    )
+
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stock_movement.id"),
+        nullable=True,
     )
 
     movement_type: Mapped[MovementType] = mapped_column(
@@ -142,7 +219,7 @@ class StockMovement(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
-    
+
     occurred_time_known: Mapped[bool] = mapped_column(
     Boolean,
     nullable=False,
@@ -163,6 +240,11 @@ class StockMovement(Base):
 
     insulin: Mapped["Insulin"] = relationship(
         back_populates="movements"
+    )
+
+    container: Mapped["InsulinContainer"] = relationship(
+        back_populates="movements",
+        foreign_keys=[container_id],
     )
 
 class PasswordResetToken(Base):

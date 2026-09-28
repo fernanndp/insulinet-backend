@@ -37,6 +37,7 @@ def create_insulin(
         name=insulin_data.name,
         concentration_units_per_ml=insulin_data.concentration_units_per_ml,
         container_volume_ml=insulin_data.container_volume_ml,
+        open_validity_days=insulin_data.open_validity_days,
     )
 
     db.add(insulin)
@@ -120,6 +121,7 @@ def update_insulin(
         insulin_data.concentration_units_per_ml
     )
     insulin.container_volume_ml = insulin_data.container_volume_ml
+    insulin.open_validity_days = insulin_data.open_validity_days
     insulin.active = insulin_data.active
 
     db.commit()
