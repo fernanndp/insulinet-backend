@@ -1,10 +1,15 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Insulin, InsulinContainer, MovementType, StockMovement
+from app.models import (
+    Insulin,
+    InsulinContainer,
+    MovementType,
+    StockMovement,
+)
 from app.services.container_service import (
     calculate_container_remaining,
     get_available_containers_fifo,
@@ -14,8 +19,12 @@ from app.services.container_service import (
 
 
 class InsufficientStockError(Exception):
-    def __init__(self, missing_units: Decimal):
+    def __init__(
+        self,
+        missing_units: Decimal,
+    ):
         self.missing_units = missing_units
+
         super().__init__(
             "Estoque insuficiente entre as canetas/frascos disponíveis."
         )
@@ -34,7 +43,9 @@ def calculate_current_stock(
 ) -> Decimal:
     statement = select(
         func.coalesce(
-            func.sum(StockMovement.quantity_units),
+            func.sum(
+                StockMovement.quantity_units
+            ),
             0,
         )
     ).where(
@@ -42,6 +53,7 @@ def calculate_current_stock(
     )
 
     result = db.scalar(statement)
+
     return Decimal(result)
 
 
@@ -49,6 +61,7 @@ def create_stock_in_containers(
     db: Session,
     insulin: Insulin,
     containers_count: int,
+    expiration_date: date | None,
 ) -> list[StockMovement]:
     units_per_container = (
         insulin.concentration_units_per_ml
@@ -62,6 +75,7 @@ def create_stock_in_containers(
             insulin_id=insulin.id,
             initial_units=units_per_container,
         )
+
         db.add(container)
         db.flush()
 
@@ -70,11 +84,16 @@ def create_stock_in_containers(
             container_id=container.id,
             movement_type=MovementType.STOCK_IN,
             quantity_units=units_per_container,
+            expiration_date=expiration_date,
             notes="Entrada de 1 recipiente",
         )
+
         db.add(movement)
         db.flush()
-        movements.append(movement)
+
+        movements.append(
+            movement
+        )
 
     return movements
 
@@ -89,23 +108,39 @@ def distribute_negative_delta(
     notes: str | None,
 ) -> list[StockMovement]:
     remaining_to_deduct = units
+
     movements: list[StockMovement] = []
 
-    for container in get_available_containers_fifo(db, insulin.id):
+    for container in get_available_containers_fifo(
+        db,
+        insulin.id,
+    ):
         if remaining_to_deduct <= 0:
             break
 
-        container_remaining = calculate_container_remaining(
-            db, container.id
+        container_remaining = (
+            calculate_container_remaining(
+                db,
+                container.id,
+            )
         )
 
         if container_remaining <= 0:
-            sync_container_status(db, container)
+            sync_container_status(
+                db,
+                container,
+            )
             continue
 
-        open_container(db, container)
+        open_container(
+            db,
+            container,
+        )
 
-        take = min(remaining_to_deduct, container_remaining)
+        take = min(
+            remaining_to_deduct,
+            container_remaining,
+        )
 
         movement = StockMovement(
             insulin_id=insulin.id,
@@ -116,20 +151,32 @@ def distribute_negative_delta(
             occurred_time_known=occurred_time_known,
             notes=notes,
         )
+
         db.add(movement)
         db.flush()
-        movements.append(movement)
+
+        movements.append(
+            movement
+        )
 
         remaining_to_deduct -= take
-        sync_container_status(db, container)
+
+        sync_container_status(
+            db,
+            container,
+        )
 
     if remaining_to_deduct > 0:
-        raise InsufficientStockError(remaining_to_deduct)
+        raise InsufficientStockError(
+            remaining_to_deduct
+        )
 
     if len(movements) > 1:
         anchor_id = movements[0].id
+
         for movement in movements[1:]:
             movement.group_id = anchor_id
+
         db.flush()
 
     return movements
@@ -142,13 +189,20 @@ def apply_positive_adjustment(
     occurred_at: datetime,
     notes: str | None,
 ) -> StockMovement:
-    containers = get_available_containers_fifo(db, insulin.id)
+    containers = get_available_containers_fifo(
+        db,
+        insulin.id,
+    )
 
     if not containers:
         raise NoContainerAvailableError()
 
     container = containers[0]
-    open_container(db, container)
+
+    open_container(
+        db,
+        container,
+    )
 
     movement = StockMovement(
         insulin_id=insulin.id,
@@ -159,9 +213,13 @@ def apply_positive_adjustment(
         occurred_time_known=True,
         notes=notes,
     )
+
     db.add(movement)
     db.flush()
 
-    sync_container_status(db, container)
+    sync_container_status(
+        db,
+        container,
+    )
 
     return movement

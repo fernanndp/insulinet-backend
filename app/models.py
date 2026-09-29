@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from enum import Enum
-
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Enum as SqlEnum,
     ForeignKey,
@@ -209,6 +209,11 @@ class StockMovement(Base):
         nullable=False,
     )
 
+    expiration_date: Mapped[date | None] = mapped_column(
+        Date,
+        nullable=True,
+    )
+    
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
